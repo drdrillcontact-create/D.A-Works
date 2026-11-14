@@ -1,0 +1,169 @@
+name: Release builds
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Tag to publish, e.g. v1.1.0"
+        required: true
+        default: "v1.1.0"
+      prerelease:
+        description: "Mark as pre-release"
+        type: boolean
+        default: false
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  RELEASE_TAG: ${{ github.event.inputs.version || github.ref_name }}
+
+jobs:
+  windows:
+    name: Windows x64 installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test workspace and sync logic
+        run: npm test
+
+      - name: Build web assets
+        run: npm run build
+
+      - name: Package Windows x64 installer
+        run: npx electron-builder --win nsis --x64 --publish never
+
+      - name: Collect installer
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+          Copy-Item release/*.exe out/
+          Get-ChildItem out | Format-Table Name, Length
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-windows
+          path: out/*.exe
+          if-no-files-found: error
+          retention-days: 30
+
+  android:
+    name: Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+
+      - uses: android-actions/setup-android@v4
+
+      - name: Install Android SDK components
+        run: sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test workspace and sync logic
+        run: npm test
+
+      - name: Build debug APK
+        run: npm run android:apk
+
+      - name: Collect APK
+        run: |
+          mkdir -p out
+          VERSION=$(node -p "require('./package.json').version")
+          cp android/app/build/outputs/apk/debug/app-debug.apk "out/DA-Works-${VERSION}-android.apk"
+          ls -lh out
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-android
+          path: out/*.apk
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: Publish GitHub Release
+    needs: [windows, android]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: release-files
+
+      - name: List files
+        run: ls -lh release-files
+
+      - name: Write release notes
+        run: |
+          cat > notes.md <<'EOF'
+          ## DA Works 1.1.0 — Windows + Android
+
+          ### دانلود / Download
+          | فایل | توضیح |
+          | --- | --- |
+          | `DA-Works-Setup-*-x64.exe` | نصاب ویندوز ۶۴ بیتی |
+          | `DA-Works-*-android.apk` | اپلیکیشن اندروید (Android 7 به بالا) |
+
+          ### نصب اندروید
+          1. فایل APK را روی گوشی دانلود و باز کن.
+          2. اگر پرسید، اجازهٔ «Install unknown apps» را به مرورگر/فایل‌منیجر بده.
+          3. این APK با کلید debug امضا شده؛ برای به‌روزرسانی از بیلد قبلی، اول داخل اپ سینک کن، بعد نسخهٔ قبلی را حذف و این را نصب کن.
+
+          ### نصب ویندوز
+          فایل `exe` را اجرا کن. چون امضای دیجیتال ندارد، ممکن است SmartScreen هشدار بدهد: **More info → Run anyway**.
+
+          ### راه‌اندازی سینک
+          1. در یکی از دستگاه‌ها: بخش **Sync** → «ساخت فایل جدید» → `DA Works Sync.json` را داخل Google Drive ذخیره کن.
+          2. در دستگاه دیگر: «انتخاب فایل موجود» → همان فایل را انتخاب کن.
+          3. کلید «همگام‌سازی» را در هر دو دستگاه روشن کن.
+          4. در ویندوز، **Google Drive for desktop** باید نصب و در حال اجرا باشد.
+
+          راهنمای کامل: `README.fa.md`
+          EOF
+
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          PRERELEASE=""
+          if [ "${{ github.event.inputs.prerelease }}" = "true" ]; then PRERELEASE="--prerelease"; fi
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" release-files/* --clobber
+            gh release edit "$RELEASE_TAG" --notes-file notes.md $PRERELEASE
+          else
+            gh release create "$RELEASE_TAG" release-files/* \
+              --target "${{ github.sha }}" \
+              --title "DA Works $RELEASE_TAG" \
+              --notes-file notes.md $PRERELEASE
+          fi
+          gh release view "$RELEASE_TAG" --json url,assets --jq '{url, assets: [.assets[] | {name, size}]}'
