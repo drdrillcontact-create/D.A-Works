@@ -1,0 +1,68 @@
+name: Build Windows x64 installer
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "**"
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test workspace and sync logic
+        run: npm test
+
+      - name: Build web assets
+        shell: pwsh
+        run: |
+          npm run build -- --debug *> vite-build.log
+          $buildExitCode = $LASTEXITCODE
+          Get-Content vite-build.log
+          if ($buildExitCode -ne 0) {
+            Get-Content vite-build.log -Tail 80 | ForEach-Object {
+              $escapedLine = $_.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+              Write-Output "::error title=Vite build diagnostic::$escapedLine"
+            }
+            exit $buildExitCode
+          }
+
+      - name: Package Windows x64 installer
+        shell: pwsh
+        run: |
+          npx electron-builder --win nsis --x64 --publish never *> windows-package.log
+          $buildExitCode = $LASTEXITCODE
+          Get-Content windows-package.log
+          if ($buildExitCode -ne 0) {
+            Get-Content windows-package.log -Tail 80 | ForEach-Object {
+              $escapedLine = $_.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+              Write-Output "::error title=Windows packaging diagnostic::$escapedLine"
+            }
+            exit $buildExitCode
+          }
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: DA-Works-Windows-x64
+          path: release/*.exe
+          if-no-files-found: error
+          retention-days: 30
