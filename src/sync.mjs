@@ -54,6 +54,34 @@ function normalizeTombstones(value) {
   );
 }
 
+function normalizeDevices(value) {
+  if (!isRecord(value)) return {};
+  const devices = {};
+  for (const [id, device] of Object.entries(value)) {
+    if (id === "__proto__" || !isRecord(device) || !/^[a-zA-Z0-9-]{6,64}$/.test(id)) continue;
+    devices[id] = {
+      platform: typeof device.platform === "string" ? device.platform : "unknown",
+      label: typeof device.label === "string" ? device.label : "DA Works",
+      lastSyncedAt: validTimestamp(device.lastSyncedAt, "")
+    };
+  }
+  return devices;
+}
+
+/** Newest write wins, so the roster always shows the last time each device synced. */
+export function mergeDeviceRosters(...rosters) {
+  const merged = {};
+  for (const roster of rosters) {
+    for (const [id, device] of Object.entries(normalizeDevices(roster))) {
+      const existing = merged[id];
+      if (!existing || Date.parse(device.lastSyncedAt || 0) >= Date.parse(existing.lastSyncedAt || 0)) {
+        merged[id] = device;
+      }
+    }
+  }
+  return merged;
+}
+
 export function loadSyncMetadata(explicitStorage) {
   const storage = getStorage(explicitStorage);
   if (!storage || typeof storage.getItem !== "function") return { tombstones: [], ok: false };
@@ -84,11 +112,11 @@ export function saveSyncMetadata(tombstones, explicitStorage) {
 
 export function parseSyncDocument(content) {
   if (content === null || content === undefined || content === "") {
-    return { schemaVersion: SYNC_FILE_SCHEMA, data: createInitialData(), tombstones: [] };
+    return { schemaVersion: SYNC_FILE_SCHEMA, data: createInitialData(), tombstones: [], devices: {} };
   }
   if (typeof content !== "string") throw new Error("محتوای فایل همگام‌سازی متنی نیست؛ فایل دست‌نخورده باقی ماند.");
   if (content.trim() === "") {
-    return { schemaVersion: SYNC_FILE_SCHEMA, data: createInitialData(), tombstones: [] };
+    return { schemaVersion: SYNC_FILE_SCHEMA, data: createInitialData(), tombstones: [], devices: {} };
   }
 
   let parsed;
@@ -109,16 +137,30 @@ export function parseSyncDocument(content) {
   return {
     schemaVersion,
     data: stampWorkspace(sourceData),
-    tombstones: normalizeTombstones(parsed.tombstones)
+    tombstones: normalizeTombstones(parsed.tombstones),
+    devices: normalizeDevices(parsed.devices)
   };
 }
 
-export function serializeSyncDocument(data, tombstones = []) {
+export function serializeSyncDocument(data, tombstones = [], devices = {}) {
   return JSON.stringify({
     schemaVersion: SYNC_FILE_SCHEMA,
     data: stampWorkspace(data),
-    tombstones: normalizeTombstones(tombstones)
+    tombstones: normalizeTombstones(tombstones),
+    devices: normalizeDevices(devices)
   }, null, 2);
+}
+
+/**
+ * Fingerprint of the syncable content (device roster excluded). Two devices that
+ * hold the same entries produce the same revision, so an idle poll can tell that
+ * nothing needs to be uploaded and leave the shared file untouched.
+ */
+export function computeRevision(data, tombstones = []) {
+  return stableHash(JSON.stringify({
+    data: stampWorkspace(data),
+    tombstones: normalizeTombstones(tombstones)
+  }));
 }
 
 function entryContent(entry) {
@@ -153,7 +195,11 @@ function entryKey(category, id) {
 export function mergeSyncState(localData, localTombstones, remoteDocument) {
   const local = stampWorkspace(localData);
   const remote = remoteDocument?.data
-    ? { data: stampWorkspace(remoteDocument.data), tombstones: normalizeTombstones(remoteDocument.tombstones) }
+    ? {
+      data: stampWorkspace(remoteDocument.data),
+      tombstones: normalizeTombstones(remoteDocument.tombstones),
+      devices: normalizeDevices(remoteDocument.devices)
+    }
     : parseSyncDocument(typeof remoteDocument === "string" ? remoteDocument : "");
   const tombstones = normalizeTombstones([
     ...normalizeTombstones(localTombstones),
@@ -208,5 +254,5 @@ export function mergeSyncState(localData, localTombstones, remoteDocument) {
     entries.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
   }
 
-  return { data: merged, tombstones };
+  return { data: merged, tombstones, devices: remote.devices };
 }

@@ -1,7 +1,7 @@
 {
   "name": "da-works",
-  "version": "1.0.1",
-  "description": "DA Works — personal creative workspace",
+  "version": "1.1.0",
+  "description": "DA Works — personal creative workspace for Windows and Android, with Google Drive sync",
   "main": "electron/main.cjs",
   "author": "DA RECORDS",
   "license": "UNLICENSED",
@@ -37,14 +37,17 @@
     "appId": "com.darecords.daworks",
     "productName": "DA Works",
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "assets/electron"
     },
     "files": [
       "dist/**/*",
       "electron/**/*",
+      "assets/electron/icon.png",
       "package.json"
     ],
     "win": {
+      "icon": "assets/electron/icon.ico",
       "target": [
         {
           "target": "nsis",
@@ -61,7 +64,9 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "DA Works"
+      "shortcutName": "DA Works",
+      "installerIcon": "assets/electron/icon.ico",
+      "uninstallerIcon": "assets/electron/icon.ico"
     }
   }
 }

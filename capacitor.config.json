@@ -1,9 +1,1 @@
-{
-  "appId": "com.darecords.daworks",
-  "appName": "DA Works",
-  "webDir": "dist",
-  "bundledWebRuntime": false,
-  "server": {
-    "androidScheme": "https"
-  }
-}
+{"appId": "com.darecords.daworks", "appName": "DA Works", "webDir": "dist", "backgroundColor": "#0b0c0e", "server": {"androidScheme": "https"}, "android": {"backgroundColor": "#0b0c0e", "allowMixedContent": false}}

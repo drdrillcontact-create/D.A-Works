@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  computeRevision,
   loadSyncMetadata,
+  mergeDeviceRosters,
   mergeSyncState,
   parseSyncDocument,
   saveSyncMetadata,
@@ -107,4 +109,55 @@ test("stores sync metadata independently from the workspace", () => {
   assert.equal(saveSyncMetadata(tombstones, storage), true);
   assert.equal(storage.values.has(SYNC_META_KEY), true);
   assert.deepEqual(loadSyncMetadata(storage), { tombstones, ok: true });
+});
+
+test("an idle device produces the same revision, so it never rewrites the shared file", () => {
+  const workspace = { Music: [entry("m1", "Mix notes", "2026-01-01T00:00:00.000Z")] };
+  const document = parseSyncDocument(serializeSyncDocument(workspace, []));
+  const merged = mergeSyncState(workspace, [], document);
+
+  assert.equal(computeRevision(merged.data, merged.tombstones), computeRevision(document.data, document.tombstones));
+});
+
+test("an edit on either device changes the revision", () => {
+  const before = { Music: [entry("m1", "Mix notes", "2026-01-01T00:00:00.000Z")] };
+  const after = { Music: [entry("m1", "Mix notes v2", "2026-01-02T00:00:00.000Z")] };
+  assert.notEqual(computeRevision(before, []), computeRevision(after, []));
+});
+
+test("the device roster survives a round-trip and keeps the newest sync per device", () => {
+  const devices = {
+    "desktop-1": { platform: "desktop", label: "DA Works · Windows", lastSyncedAt: "2026-02-01T08:00:00.000Z" },
+    "android-1": { platform: "android", label: "DA Works · Android", lastSyncedAt: "2026-02-01T09:00:00.000Z" }
+  };
+  const parsed = parseSyncDocument(serializeSyncDocument({ Tasks: [] }, [], devices));
+  assert.deepEqual(parsed.devices, devices);
+
+  const merged = mergeDeviceRosters(parsed.devices, {
+    "android-1": { platform: "android", label: "DA Works · Android", lastSyncedAt: "2026-02-01T07:00:00.000Z" },
+    "tablet-1": { platform: "android", label: "DA Works · Tablet", lastSyncedAt: "2026-02-01T10:00:00.000Z" }
+  });
+  assert.equal(merged["android-1"].lastSyncedAt, "2026-02-01T09:00:00.000Z");
+  assert.equal(Object.keys(merged).length, 3);
+});
+
+test("a phone entry written offline reaches the desktop through the shared document", () => {
+  // The phone writes offline, then syncs: its entry lands in the shared file.
+  const phone = { Lyrics: [entry("phone-lyric", "نوشتهٔ روی گوشی", "2026-04-01T20:00:00.000Z", { language: "فارسی" })] };
+  const sharedFile = serializeSyncDocument(phone, [], {
+    "android-1": { platform: "android", label: "DA Works · Android", lastSyncedAt: "2026-04-01T20:05:00.000Z" }
+  });
+
+  // The desktop comes online later with its own local work.
+  const desktop = { Lyrics: [entry("desktop-lyric", "Desktop draft", "2026-04-01T18:00:00.000Z")] };
+  const merged = mergeSyncState(desktop, [], parseSyncDocument(sharedFile));
+
+  assert.deepEqual(new Set(merged.data.Lyrics.map((item) => item.id)), new Set(["phone-lyric", "desktop-lyric"]));
+  assert.equal(merged.data.Lyrics.find((item) => item.id === "phone-lyric").language, "فارسی");
+  assert.equal(merged.devices["android-1"].platform, "android");
+
+  // The desktop uploads the union; the phone pulls it back without duplicates.
+  const uploaded = serializeSyncDocument(merged.data, merged.tombstones, merged.devices);
+  const phoneAgain = mergeSyncState(phone, [], parseSyncDocument(uploaded));
+  assert.equal(phoneAgain.data.Lyrics.length, 2);
 });
