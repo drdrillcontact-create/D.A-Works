@@ -1,0 +1,9 @@
+{
+  "appId": "com.darecords.daworks",
+  "appName": "DA Works",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https"
+  }
+}

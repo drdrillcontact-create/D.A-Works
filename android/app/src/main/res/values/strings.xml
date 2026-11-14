@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">DA Works</string>
+    <string name="title_activity_main">DA Works</string>
+    <string name="package_name">com.darecords.daworks</string>
+    <string name="custom_url_scheme">com.darecords.daworks</string>
+</resources>
