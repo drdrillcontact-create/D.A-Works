@@ -12,18 +12,23 @@ on:
         type: boolean
         default: false
   push:
+    branches:
+      - "**"
     tags:
       - "v*"
 
 permissions:
   contents: write
 
-env:
-  RELEASE_TAG: ${{ github.event.inputs.version || github.ref_name }}
-
+# A branch push only publishes when the commit message asks for it, so ordinary
+# pushes keep using the lighter build-only workflows.
 jobs:
   windows:
     name: Windows x64 installer
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      startsWith(github.ref, 'refs/tags/v') ||
+      contains(github.event.head_commit.message, '[release]')
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
@@ -62,6 +67,10 @@ jobs:
 
   android:
     name: Android APK
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      startsWith(github.ref, 'refs/tags/v') ||
+      contains(github.event.head_commit.message, '[release]')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -150,9 +159,23 @@ jobs:
           راهنمای کامل: `README.fa.md`
           EOF
 
+      - name: Resolve the release tag
+        id: tag
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            TAG="${{ github.event.inputs.version }}"
+          elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            TAG="${{ github.ref_name }}"
+          else
+            TAG="v$(node -p "require('./package.json').version")"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Publishing $TAG"
+
       - name: Create or update the release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
         run: |
           set -euo pipefail
           PRERELEASE=""
